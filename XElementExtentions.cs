@@ -20,5 +20,16 @@ namespace JackAnalyzer
         {
             return el != null && el.Name == type;
         }
+
+        public static XElement Category(this XElement el, string category, bool defining)
+        {
+            if (el != null)
+            {
+                el.Add(new XAttribute("category", category));
+                el.Add(new XAttribute("defining", defining));
+            }
+
+            return el;
+        }
     }
 }

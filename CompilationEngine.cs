@@ -7,6 +7,8 @@ namespace JackAnalyzer
 {
     internal class CompilationEngine
     {
+        private Dictionary<string, string> _DefinedVarCategories = new Dictionary<string, string>();
+
         public CompilationEngine(string[] filePaths)
         {
             foreach (string path in filePaths)
@@ -34,7 +36,7 @@ namespace JackAnalyzer
             if (!it.Next().Is("identifier"))
                 throw new Exception("Class name identifier expected.");
 
-            xml.Add(it.CurrentAsString());
+            xml.Add(it.Current().Category("class", true).ToString());
 
             if (!it.HasMore())
                 throw new Exception("Opening bracket for class expected.");
@@ -46,7 +48,7 @@ namespace JackAnalyzer
 
             xml.AddRange(CompileClassVarDec(it));
 
-            xml.AddRange(CompileSubroutine(it));
+            xml.AddRange(CompileSubroutineDec(it));
 
             if (!it.HasMore())
                 throw new Exception("Closing bracket for class expected.");
@@ -81,6 +83,8 @@ namespace JackAnalyzer
 
             xml.Add(it.Next().ToString());
 
+            var varCategory = it.Current().Value;
+
             if (!it.HasMore())
                 throw new Exception($"Type expected for '{it.Current()}'.");
 
@@ -88,9 +92,12 @@ namespace JackAnalyzer
                 !it.Current().Is("identifier", v => true /* validate class name */))
                 throw new Exception($"Invalid type defined for field/static: '{it.Current()}'.");
 
-            xml.Add(it.CurrentAsString());
+            if (!new string[] { "int", "char", "boolean" }.Contains(it.Current().Value))
+                xml.Add(it.Current().Category("class", false).ToString());
+            else
+                xml.Add(it.CurrentAsString());
 
-            xml.AddRange(WriteVarName(it));
+            xml.AddRange(WriteVarName(it, varCategory));
 
             xml.Add($"</{tagName}>");
 
@@ -99,7 +106,7 @@ namespace JackAnalyzer
             return xml;
         }
 
-        private IEnumerable<string> CompileSubroutine(TokenIterator it)
+        private IEnumerable<string> CompileSubroutineDec(TokenIterator it)
         {
             var xml = new List<string>();
 
@@ -113,12 +120,15 @@ namespace JackAnalyzer
                 !it.Current().Is("identifier", v => true /* validate class name */))
                 throw new Exception($"Invalid type defined for subroutine: '{it.Current()}'.");
 
-            xml.Add(it.CurrentAsString());
+            if (!new string[] { "void", "int", "char", "boolean" }.Contains(it.Current().Value))
+                xml.Add(it.Current().Category("class", false).ToString());
+            else
+                xml.Add(it.CurrentAsString());
 
             if (!it.Next().Is("identifier"))
                 throw new Exception("Expected name for subroutine.");
 
-            xml.Add(it.CurrentAsString());
+            xml.Add(it.Current().Category("subroutine", true).ToString());
 
             if (!it.Next().Is("symbol", "("))
                 throw new Exception("Expected opening paranthesis for subroutine.");
@@ -136,7 +146,7 @@ namespace JackAnalyzer
 
             xml.Add("</subroutineDec>");
 
-            xml.AddRange(CompileSubroutine(it));
+            xml.AddRange(CompileSubroutineDec(it));
 
             return xml;
         }
@@ -174,7 +184,9 @@ namespace JackAnalyzer
             if (!it.Next().Is("identifier"))
                 throw new Exception("Invalid indentifier for parameter.");
 
-            xml.Add(it.CurrentAsString());
+            AddDefinedVarCategory("argument", it.Current().Value);
+
+            xml.Add(it.Current().Category("argument", true).ToString());
 
             if (it.Peek().Is("symbol", ","))
             {
@@ -185,7 +197,7 @@ namespace JackAnalyzer
             return xml;
         }
 
-        private IEnumerable<string> WriteVarName(TokenIterator it)
+        private IEnumerable<string> WriteVarName(TokenIterator it, string category)
         {
             var xml = new List<string>();
 
@@ -195,12 +207,14 @@ namespace JackAnalyzer
             if (!it.Next().Is("identifier"))
                 throw new Exception("Identifier expected for var name.");
 
-            xml.Add(it.CurrentAsString());
+            AddDefinedVarCategory(category, it.Current().Value);
+
+            xml.Add(it.Current().Category(category, true).ToString());
 
             if (it.Next().Is("symbol", ","))
             {
                 xml.Add(it.CurrentAsString());
-                xml.AddRange(WriteVarName(it));
+                xml.AddRange(WriteVarName(it, category));
             }
             else if (it.Current().Is("symbol", ";"))
             {
@@ -517,14 +531,14 @@ namespace JackAnalyzer
             if (!it.Next().Is("identifier"))
                 throw new Exception("Expected identifier for subroutine call.");
 
-            var identifier = it.CurrentAsString();
+            var identifier = it.Current();
 
             if (!it.HasMore())
                 throw new Exception("Expected expression list definition.");
 
             if (it.Next().Is("symbol", "("))
             {
-                xml.Add(identifier);
+                xml.Add(identifier.Category("subroutine", false).ToString());
                 xml.Add(it.CurrentAsString());
                 xml.AddRange(CompileExpressionList(it));
 
@@ -538,7 +552,7 @@ namespace JackAnalyzer
             }
             else if (it.Current().Is("symbol", "."))
             {
-                xml.Add(identifier);
+                xml.Add(identifier.Category("class", false).ToString());
                 xml.Add(it.CurrentAsString());
                 xml.AddRange(CompileSubroutineCall(it));
             }
@@ -623,7 +637,10 @@ namespace JackAnalyzer
                 }
                 else
                 {
-                    xml.Add(it.Next().ToString());
+                    if (it.Peek().Is("identifier"))
+                        xml.Add(it.Next().Category(CategoryForDefinedVar(it.Current().Value), false).ToString());
+                    else
+                        xml.Add(it.Next().ToString());
                 }
 
                 xml.Add("</term>");
@@ -642,7 +659,7 @@ namespace JackAnalyzer
             if (!it.Next().Is("identifier"))
                 throw new Exception("Defined indentifier expected for var name.");
 
-            xml.Add(it.CurrentAsString());
+            xml.Add(it.Current().Category(CategoryForDefinedVar(it.Current().Value), false).ToString());
 
             if (it.HasMore() && it.Peek().Is("symbol", "["))
             {
@@ -659,6 +676,21 @@ namespace JackAnalyzer
             }
 
             return xml;
+        }
+
+        private void AddDefinedVarCategory(string category, string value)
+        {
+            _DefinedVarCategories[value] = category;
+        }
+
+        private string CategoryForDefinedVar(string value)
+        {
+            if (_DefinedVarCategories.ContainsKey(value))
+            {
+                return _DefinedVarCategories[value];
+            }
+
+            return "unknown";
         }
     }
 }

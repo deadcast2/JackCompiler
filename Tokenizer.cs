@@ -2,7 +2,7 @@
 using System.IO;
 using System.Text.RegularExpressions;
 
-namespace JackAnalyzer
+namespace JackCompiler
 {
     internal class Tokenizer
     {

@@ -24,7 +24,7 @@ namespace JackCompiler
         {
             _ClassSymbolTable.Reset();
 
-            var xml = new List<string> { "<class>" };
+            var xml = new List<string>();
 
             if (!it.HasMore())
                 throw new Exception("Class definition missing");
@@ -32,15 +32,13 @@ namespace JackCompiler
             if (!it.Next().Is("keyword", "class"))
                 throw new Exception("'Class' keyword expected.");
 
-            xml.Add(it.CurrentAsString());
-
             if (!it.HasMore())
                 throw new Exception("Class name expected.");
 
             if (!it.Next().Is("identifier"))
                 throw new Exception("Class name identifier expected.");
 
-            xml.Add(it.CurrentAsString());
+            var name = it.Current().Value;
 
             if (!it.HasMore())
                 throw new Exception("Opening bracket for class expected.");
@@ -48,21 +46,15 @@ namespace JackCompiler
             if (!it.Next().Is("symbol", "{"))
                 throw new Exception("'{' symbol expected for class.");
 
-            xml.Add(it.CurrentAsString());
-
             xml.AddRange(CompileClassVarDec(it));
 
-            xml.AddRange(CompileSubroutineDec(it));
+            xml.AddRange(CompileSubroutineDec(it, name));
 
             if (!it.HasMore())
                 throw new Exception("Closing bracket for class expected.");
 
             if (!it.Next().Is("symbol", "}"))
                 throw new Exception("'}' symbol expected for class.");
-
-            xml.Add(it.CurrentAsString());
-
-            xml.Add("</class>");
 
             return xml;
         }
@@ -109,7 +101,7 @@ namespace JackCompiler
             return xml;
         }
 
-        private IEnumerable<string> CompileSubroutineDec(TokenIterator it)
+        private IEnumerable<string> CompileSubroutineDec(TokenIterator it, string className)
         {
             _SubroutineSymbolTable.Reset();
 
@@ -118,37 +110,28 @@ namespace JackCompiler
             if (!it.Next().Is("keyword", "constructor", "function", "method"))
                 return xml;
 
-            xml.Add("<subroutineDec>");
-            xml.Add(it.CurrentAsString());
-
             if (!it.Next().Is("keyword", "void", "int", "char", "boolean") &&
                 !it.Current().Is("identifier", v => true /* validate class name */))
                 throw new Exception($"Invalid type defined for subroutine: '{it.Current()}'.");
 
-            xml.Add(it.CurrentAsString());
-
             if (!it.Next().Is("identifier"))
                 throw new Exception("Expected name for subroutine.");
 
-            xml.Add(it.CurrentAsString());
+            var name = $"{className}.{it.Current().Value}";
 
             if (!it.Next().Is("symbol", "("))
                 throw new Exception("Expected opening paranthesis for subroutine.");
 
-            xml.Add(it.CurrentAsString());
-
             xml.AddRange(CompileParameterList(it, _SubroutineSymbolTable));
+
+            xml.Add(VMWriter.WriteFunction(name, _SubroutineSymbolTable.VarCount(SymbolKind.ARG)));
 
             if (!it.Next().Is("symbol", ")"))
                 throw new Exception("Expected closing paranthesis for subroutine.");
 
-            xml.Add(it.CurrentAsString());
-
             xml.AddRange(CompileSubroutineBody(it, _SubroutineSymbolTable));
 
-            xml.Add("</subroutineDec>");
-
-            xml.AddRange(CompileSubroutineDec(it));
+            xml.AddRange(CompileSubroutineDec(it, className));
 
             return xml;
         }
@@ -160,12 +143,8 @@ namespace JackCompiler
             if (!it.HasMore())
                 return xml;
 
-            xml.Add("<parameterList>");
-
             if (it.Peek().Is("keyword"))
                 xml.AddRange(WriteParamName(it, symbolTable));
-
-            xml.Add("</parameterList>");
 
             return xml;
         }
@@ -180,8 +159,6 @@ namespace JackCompiler
 
             var type = it.Current().Value;
 
-            xml.Add(it.CurrentAsString());
-
             if (!it.HasMore())
                 throw new Exception("Identifier for parameter expected.");
 
@@ -190,11 +167,9 @@ namespace JackCompiler
 
             symbolTable.Define(it.Current().Value, type, SymbolKind.ARG);
 
-            xml.Add(it.CurrentAsString());
-
             if (it.Peek().Is("symbol", ","))
             {
-                xml.Add(it.Next().ToString());
+                it.Next();
 
                 xml.AddRange(WriteParamName(it, symbolTable));
             }
@@ -236,15 +211,13 @@ namespace JackCompiler
 
         private IEnumerable<string> CompileSubroutineBody(TokenIterator it, SymbolTable symbolTable)
         {
-            var xml = new List<string> { "<subroutineBody>" };
+            var xml = new List<string>();
 
             if (!it.HasMore())
                 throw new Exception("Expected subroutine body.");
 
             if (!it.Next().Is("symbol", "{"))
                 throw new Exception("'{' missing for subroutine body.");
-
-            xml.Add(it.CurrentAsString());
 
             xml.AddRange(CompileVarDec(it, symbolTable, "varDec", "var"));
 
@@ -256,16 +229,12 @@ namespace JackCompiler
             if (!it.Next().Is("symbol", "}"))
                 throw new Exception("'}' missing for subroutine body.");
 
-            xml.Add(it.CurrentAsString());
-
-            xml.Add("</subroutineBody>");
-
             return xml;
         }
 
         private IEnumerable<string> CompileStatements(TokenIterator it)
         {
-            var xml = new List<string> { "<statements>" };
+            var xml = new List<string>();
 
             while (it.Peek().Is("keyword", "let", "do", "return", "if", "while"))
             {
@@ -279,8 +248,6 @@ namespace JackCompiler
 
                 xml.AddRange(CompileWhile(it));
             }
-
-            xml.Add("</statements>");
 
             return xml;
         }
@@ -309,7 +276,7 @@ namespace JackCompiler
 
             xml.Add(it.CurrentAsString());
 
-            xml.AddRange(CompileExpression(it));
+            xml.AddRange(CompileExpression(it).Item1);
 
             if (!it.HasMore())
                 throw new Exception("Ending expected for let statement.");
@@ -334,9 +301,7 @@ namespace JackCompiler
             if (!it.Peek().Is("keyword", "do"))
                 return xml;
 
-            xml.Add("<doStatement>");
-
-            xml.Add(it.Next().ToString());
+            it.Next();
 
             xml.AddRange(CompileSubroutineCall(it));
 
@@ -345,10 +310,6 @@ namespace JackCompiler
 
             if (!it.Next().Is("symbol", ";"))
                 throw new Exception("Defined ending expected for do statement.");
-
-            xml.Add(it.CurrentAsString());
-
-            xml.Add("</doStatement>");
 
             return xml;
         }
@@ -363,21 +324,17 @@ namespace JackCompiler
             if (!it.Peek().Is("keyword", "return"))
                 return xml;
 
-            xml.Add("<returnStatement>");
+            it.Next();
 
-            xml.Add(it.Next().ToString());
+            xml.AddRange(CompileExpression(it).Item1);
 
-            xml.AddRange(CompileExpression(it));
+            xml.Add(VMWriter.WriteReturn());
 
             if (!it.HasMore())
                 throw new Exception("Ending expected for return statement.");
 
             if (!it.Next().Is("symbol", ";"))
                 throw new Exception("Defined ending expected for return statement.");
-
-            xml.Add(it.CurrentAsString());
-
-            xml.Add("</returnStatement>");
 
             return xml;
         }
@@ -404,7 +361,7 @@ namespace JackCompiler
 
             xml.Add(it.CurrentAsString());
 
-            xml.AddRange(CompileExpression(it));
+            xml.AddRange(CompileExpression(it).Item1);
 
             if (!it.HasMore())
                 throw new Exception("Closing paranthesis expected for if statement.");
@@ -494,7 +451,7 @@ namespace JackCompiler
 
             xml.Add(it.CurrentAsString());
 
-            xml.AddRange(CompileExpression(it));
+            xml.AddRange(CompileExpression(it).Item1);
 
             if (!it.HasMore())
                 throw new Exception("Closing paranthesis expected for while statement.");
@@ -527,7 +484,7 @@ namespace JackCompiler
             return xml;
         }
 
-        private IEnumerable<string> CompileSubroutineCall(TokenIterator it)
+        private IEnumerable<string> CompileSubroutineCall(TokenIterator it, string prefix = "")
         {
             var xml = new List<string>();
 
@@ -537,47 +494,45 @@ namespace JackCompiler
             if (!it.Next().Is("identifier"))
                 throw new Exception("Expected identifier for subroutine call.");
 
-            var identifier = it.CurrentAsString();
+            var identifier = it.Current().Value;
 
             if (!it.HasMore())
                 throw new Exception("Expected expression list definition.");
 
             if (it.Next().Is("symbol", "("))
             {
-                xml.Add(identifier);
-                xml.Add(it.CurrentAsString());
-                xml.AddRange(CompileExpressionList(it));
+                var expressionList = CompileExpressionList(it);
+
+                xml.AddRange(expressionList.Item1.Reverse());
+
+                xml.Add(VMWriter.WriteCall(prefix + identifier, expressionList.Item2));
 
                 if (!it.HasMore())
                     throw new Exception("Expected more tokens to finish subroutine call.");
 
                 if (!it.Next().Is("symbol", ")"))
                     throw new Exception("Expected subroutine call closing paranthesis.");
-
-                xml.Add(it.CurrentAsString());
             }
             else if (it.Current().Is("symbol", "."))
             {
-                xml.Add(identifier);
-                xml.Add(it.CurrentAsString());
-                xml.AddRange(CompileSubroutineCall(it));
+                xml.AddRange(CompileSubroutineCall(it, $"{identifier}."));
             }
 
             return xml;
         }
 
-        private IEnumerable<string> CompileExpressionList(TokenIterator it)
+        private (IEnumerable<string>, int) CompileExpressionList(TokenIterator it)
         {
-            var xml = new List<string> { "<expressionList>" };
+            var xml = new List<string>();
 
-            xml.AddRange(CompileExpression(it));
+            var expressions = CompileExpression(it);
 
-            xml.Add("</expressionList>");
+            xml.AddRange(expressions.Item1);
 
-            return xml;
+            return (xml, expressions.Item2);
         }
 
-        private IEnumerable<string> CompileExpression(TokenIterator it)
+        private (IEnumerable<string>, int) CompileExpression(TokenIterator it, int argCount = 1)
         {
             var xml = new List<string>();
 
@@ -585,26 +540,36 @@ namespace JackCompiler
 
             if (terms.Count() > 0)
             {
-                xml.Add("<expression>");
-
-                xml.AddRange(terms);
-
                 if (it.HasMore() && it.Peek().Is("symbol", "+", "-", "*", "/", "&", "|", "<", ">", "="))
                 {
-                    xml.Add(it.Next().ToString());
+                    var op = it.Next().Value;
+
+                    switch (op)
+                    {
+                        case "+":
+                            xml.Add(VMWriter.WriteArithmetic(ArithmeticOp.ADD));
+                            break;
+                        case "*":
+                            xml.Add(VMWriter.WriteCall("Math.multiply", 2));
+                            break;
+                        default:
+                            xml.Add(op);
+                            break;
+                    }
+
                     xml.AddRange(CompileTerm(it));
                 }
-
-                xml.Add("</expression>");
 
                 if (it.HasMore() && it.Peek().Is("symbol", ","))
                 {
                     xml.Add(it.Next().ToString());
-                    xml.AddRange(CompileExpression(it));
+                    xml.AddRange(CompileExpression(it, ++argCount).Item1);
                 }
+
+                xml.AddRange(terms);
             }
 
-            return xml;
+            return (xml, argCount);
         }
 
         private IEnumerable<string> CompileTerm(TokenIterator it)
@@ -620,8 +585,6 @@ namespace JackCompiler
                 it.Peek().Is("symbol", "(", "-", "~") ||
                 it.Peek().Is("keyword"))
             {
-                xml.Add("<term>");
-
                 if (it.Peek(2).Is("symbol", "."))
                 {
                     xml.AddRange(CompileSubroutineCall(it));
@@ -632,9 +595,11 @@ namespace JackCompiler
                 }
                 else if (it.Peek().Is("symbol", "("))
                 {
-                    xml.Add(it.Next().ToString());
-                    xml.AddRange(CompileExpression(it));
-                    xml.Add(it.Next().ToString());
+                    it.Next();
+
+                    xml.AddRange(CompileExpression(it).Item1);
+
+                    it.Next();
                 }
                 else if (it.Peek().Is("symbol", "-", "~")) // unary ops
                 {
@@ -643,10 +608,15 @@ namespace JackCompiler
                 }
                 else
                 {
-                    xml.Add(it.Next().ToString());
+                    if (it.Peek().Is("integerConstant"))
+                    {
+                        xml.Add(VMWriter.WritePush(Segment.CONSTANT, int.Parse(it.Next().Value)));
+                    }
+                    else
+                    {
+                        xml.Add(it.Next().ToString());
+                    }
                 }
-
-                xml.Add("</term>");
             }
 
             return xml;
@@ -667,7 +637,7 @@ namespace JackCompiler
             if (it.HasMore() && it.Peek().Is("symbol", "["))
             {
                 xml.Add(it.Next().ToString());
-                xml.AddRange(CompileExpression(it));
+                xml.AddRange(CompileExpression(it).Item1);
 
                 if (!it.HasMore())
                     throw new Exception("Closing bracket expected for array access.");

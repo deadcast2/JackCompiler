@@ -14,8 +14,9 @@ namespace JackCompiler
         {
             foreach (string path in filePaths)
             {
-                var xml = CompileClass(new TokenIterator(new Tokenizer(path).Process()));
-                File.WriteAllLines(Path.ChangeExtension(path, "xml"), xml);
+                var vm = CompileClass(new TokenIterator(new Tokenizer(path).Process()));
+
+                File.WriteAllLines(Path.ChangeExtension(path, "vm"), vm);
             }
         }
 

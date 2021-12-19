@@ -103,6 +103,8 @@ namespace JackCompiler
             if (!it.Next().Is("keyword", "constructor", "function", "method"))
                 return xml;
 
+            var subroutineType = it.Current().Value;
+
             if (!it.Next().Is("keyword", "void", "int", "char", "boolean") &&
                 !it.Current().Is("identifier", v => true /* validate class name */))
                 throw new Exception($"Invalid type defined for subroutine: '{it.Current()}'.");
@@ -117,6 +119,15 @@ namespace JackCompiler
             if (!it.Next().Is("symbol", "("))
                 throw new Exception("Expected opening paranthesis for subroutine.");
 
+            if (subroutineType == "constructor")
+            {
+                _ClassSymbolTable.Define("this", className, SymbolKind.POINTER);
+            }
+            else if (subroutineType == "method")
+            {
+                _SubroutineSymbolTable.Define("this", className, SymbolKind.ARGUMENT);
+            }
+
             xml.AddRange(CompileParameterList(it, _SubroutineSymbolTable));
 
             if (!it.Next().Is("symbol", ")"))
@@ -126,6 +137,18 @@ namespace JackCompiler
             var body = CompileSubroutineBody(it, _SubroutineSymbolTable, returnType);
 
             xml.Add(VMWriter.WriteFunction(name, _SubroutineSymbolTable.VarCount(SymbolKind.VAR)));
+
+            if (subroutineType == "constructor")
+            {
+                xml.Add(VMWriter.WritePush(Segment.CONSTANT, _ClassSymbolTable.VarCount(SymbolKind.FIELD)));
+                xml.Add(VMWriter.WriteCall("Memory.alloc", 1));
+                xml.Add(VMWriter.WritePop(Segment.POINTER, 0));
+            }
+            else if (subroutineType == "method")
+            {
+                xml.Add(VMWriter.WritePush(Segment.ARGUMENT, 0));
+                xml.Add(VMWriter.WritePop(Segment.POINTER, 0));
+            }
 
             xml.AddRange(body);
 
@@ -492,11 +515,29 @@ namespace JackCompiler
 
             if (it.Next().Is("symbol", "("))
             {
+                var isMethod = false;
+
+                // When no prefix for method call then assume it's part of the current processing class.
+                if (string.IsNullOrEmpty(prefix))
+                {
+                    prefix = "this";
+                }
+
+                // When about to call a method the THIS pointer must be prepared.
+                var symbol = LookupSymbol(prefix);
+                if (prefix == "this" || symbol.Segment != Segment.UNKNOWN)
+                {
+                    isMethod = true;
+
+                    xml.Add(VMWriter.WritePush(symbol.Segment, symbol.Index));
+                }
+
                 var expressionList = CompileExpressionList(it);
 
                 xml.AddRange(expressionList.Item1);
 
-                xml.Add(VMWriter.WriteCall(prefix + identifier, expressionList.Item2));
+                // Amount of args should be N+1 for methods.
+                xml.Add(VMWriter.WriteCall($"{symbol.Type}." + identifier, expressionList.Item2 + (isMethod ? 1 : 0)));
 
                 if (!it.HasMore())
                     throw new Exception("Expected more tokens to finish subroutine call.");
@@ -506,7 +547,7 @@ namespace JackCompiler
             }
             else if (it.Current().Is("symbol", "."))
             {
-                xml.AddRange(CompileSubroutineCall(it, $"{identifier}."));
+                xml.AddRange(CompileSubroutineCall(it, prefix: identifier));
             }
 
             return xml;
@@ -535,7 +576,7 @@ namespace JackCompiler
 
                 xml.AddRange(terms);
 
-                if (it.HasMore() && it.Peek().Is("symbol", "+", "-", "*", "/", "&", "|", "<", ">", "="))
+                while (it.HasMore() && it.Peek().Is("symbol", "+", "-", "*", "/", "&", "|", "<", ">", "="))
                 {
                     var op = it.Next().Value;
 
@@ -645,21 +686,16 @@ namespace JackCompiler
                         {
                             xml.Add(VMWriter.WritePush(Segment.CONSTANT, 0));
                         }
+                        else if (keyword == "this")
+                        {
+                            xml.Add(VMWriter.WritePush(Segment.POINTER, 0));
+                        }
                     }
                     else
                     {
-                        // Refactor this!
-                        var name = it.Next().Value;
-                        var segment = Segment.UNKNOWN;
-                        var kind = _SubroutineSymbolTable.KindOf(name);
+                        var symbol = LookupSymbol(it.Next().Value);
 
-                        if (kind == SymbolKind.ARGUMENT)
-                            segment = Segment.ARGUMENT;
-                        else if (kind == SymbolKind.VAR)
-                            segment = Segment.LOCAL;
-                        //*********************************
-
-                        xml.Add(VMWriter.WritePush(segment, _SubroutineSymbolTable.IndexOf(name)));
+                        xml.Add(VMWriter.WritePush(symbol.Segment, symbol.Index));
                     }
                 }
             }
@@ -677,18 +713,9 @@ namespace JackCompiler
             if (!it.Next().Is("identifier"))
                 throw new Exception("Defined indentifier expected for var name.");
 
-            // Refactor this!
-            var name = it.Current().Value;
-            var segment = Segment.UNKNOWN;
-            var kind = _SubroutineSymbolTable.KindOf(name);
+            var symbol = LookupSymbol(it.Current().Value);
 
-            if (kind == SymbolKind.ARGUMENT)
-                segment = Segment.ARGUMENT;
-            else if (kind == SymbolKind.VAR)
-                segment = Segment.LOCAL;
-            //*********************************
-
-            xml.Add(VMWriter.WritePop(segment, _SubroutineSymbolTable.IndexOf(name)));
+            xml.Add(VMWriter.WritePop(symbol.Segment, symbol.Index));
 
             if (it.HasMore() && it.Peek().Is("symbol", "["))
             {
@@ -705,6 +732,31 @@ namespace JackCompiler
             }
 
             return xml;
+        }
+
+        private (Segment Segment, int Index, string Type) LookupSymbol(string name)
+        {
+            if (_ClassSymbolTable.IndexOf(name) > -1)
+                return SymbolSegmentWithIndex(_ClassSymbolTable, name);
+
+            return SymbolSegmentWithIndex(_SubroutineSymbolTable, name);
+        }
+
+        private (Segment Segment, int Index, string Type) SymbolSegmentWithIndex(SymbolTable symbolTable, string name)
+        {
+            var segment = Segment.UNKNOWN;
+            var kind = symbolTable.KindOf(name);
+
+            if (kind == SymbolKind.ARGUMENT)
+                segment = Segment.ARGUMENT;
+            else if (kind == SymbolKind.VAR)
+                segment = Segment.LOCAL;
+            else if (kind == SymbolKind.FIELD)
+                segment = Segment.THIS;
+            else if (kind == SymbolKind.POINTER)
+                segment = Segment.POINTER;
+
+            return (segment, symbolTable.IndexOf(name), symbolTable.TypeOf(name));
         }
     }
 }

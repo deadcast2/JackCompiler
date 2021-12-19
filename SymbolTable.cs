@@ -2,7 +2,9 @@
 
 namespace JackCompiler
 {
-    public enum SymbolKind { NONE, STATIC, FIELD, ARGUMENT, VAR }
+    public enum SymbolKind { NONE, STATIC, FIELD, ARGUMENT, VAR,
+        POINTER
+    }
 
     internal class SymbolTable
     {
@@ -96,7 +98,7 @@ namespace JackCompiler
                 return _Symbols[name].Type;
             }
 
-            return string.Empty;
+            return name;
         }
 
         public int IndexOf(string name)
@@ -106,7 +108,7 @@ namespace JackCompiler
                 return _Symbols[name].Index;
             }
 
-            return 0;
+            return -1;
         }
     }
 }

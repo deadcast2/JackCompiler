@@ -673,6 +673,18 @@ namespace JackCompiler
                     {
                         xml.Add(VMWriter.WritePush(Segment.CONSTANT, int.Parse(it.Next().Value)));
                     }
+                    if (it.Peek().Is("stringConstant"))
+                    {
+                        var content = it.Next().Value;
+                        xml.Add(VMWriter.WritePush(Segment.CONSTANT, content.Length));
+                        xml.Add(VMWriter.WriteCall("String.new", 1));
+
+                        foreach (var @char in content)
+                        {
+                            xml.Add(VMWriter.WritePush(Segment.CONSTANT, @char));
+                            xml.Add(VMWriter.WriteCall("String.appendChar", 2));
+                        }
+                    }
                     else if (it.Peek().Is("keyword"))
                     {
                         var keyword = it.Next().Value;

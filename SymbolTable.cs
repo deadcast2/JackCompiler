@@ -2,9 +2,7 @@
 
 namespace JackCompiler
 {
-    public enum SymbolKind { NONE, STATIC, FIELD, ARGUMENT, VAR,
-        POINTER
-    }
+    public enum SymbolKind { NONE, STATIC, FIELD, ARGUMENT, VAR, POINTER }
 
     internal class SymbolTable
     {

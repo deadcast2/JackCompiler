@@ -9,6 +9,7 @@ namespace JackCompiler
     {
         private SymbolTable _ClassSymbolTable = new SymbolTable();
         private SymbolTable _SubroutineSymbolTable = new SymbolTable();
+        private int _NextLabelIndex;
 
         public CompilationEngine(string[] filePaths)
         {
@@ -75,11 +76,7 @@ namespace JackCompiler
             if (!it.Peek().Is("keyword", allowedValues))
                 return xml;
 
-            xml.Add($"<{tagName}>");
-
             var kind = SymbolTable.KindFor(it.Next().Value);
-
-            xml.Add(it.Current().ToString());
 
             if (!it.HasMore())
                 throw new Exception($"Type expected for '{it.Current()}'.");
@@ -90,11 +87,7 @@ namespace JackCompiler
 
             var type = it.Current().Value;
 
-            xml.Add(it.CurrentAsString());
-
             xml.AddRange(WriteVarName(symbolTable, type, kind, it));
-
-            xml.Add($"</{tagName}>");
 
             xml.AddRange(CompileVarDec(it, symbolTable, tagName, allowedValues));
 
@@ -114,6 +107,8 @@ namespace JackCompiler
                 !it.Current().Is("identifier", v => true /* validate class name */))
                 throw new Exception($"Invalid type defined for subroutine: '{it.Current()}'.");
 
+            var returnType = it.Current().Value;
+
             if (!it.Next().Is("identifier"))
                 throw new Exception("Expected name for subroutine.");
 
@@ -124,12 +119,15 @@ namespace JackCompiler
 
             xml.AddRange(CompileParameterList(it, _SubroutineSymbolTable));
 
-            xml.Add(VMWriter.WriteFunction(name, _SubroutineSymbolTable.VarCount(SymbolKind.ARG)));
-
             if (!it.Next().Is("symbol", ")"))
                 throw new Exception("Expected closing paranthesis for subroutine.");
 
-            xml.AddRange(CompileSubroutineBody(it, _SubroutineSymbolTable));
+            // Save the body to write after symbol table gets updated in case of any locals.
+            var body = CompileSubroutineBody(it, _SubroutineSymbolTable, returnType);
+
+            xml.Add(VMWriter.WriteFunction(name, _SubroutineSymbolTable.VarCount(SymbolKind.VAR)));
+
+            xml.AddRange(body);
 
             xml.AddRange(CompileSubroutineDec(it, className));
 
@@ -165,7 +163,7 @@ namespace JackCompiler
             if (!it.Next().Is("identifier"))
                 throw new Exception("Invalid indentifier for parameter.");
 
-            symbolTable.Define(it.Current().Value, type, SymbolKind.ARG);
+            symbolTable.Define(it.Current().Value, type, SymbolKind.ARGUMENT);
 
             if (it.Peek().Is("symbol", ","))
             {
@@ -189,19 +187,11 @@ namespace JackCompiler
 
             symbolTable.Define(it.Current().Value, type, kind);
 
-            xml.Add(it.CurrentAsString());
-
             if (it.Next().Is("symbol", ","))
             {
-                xml.Add(it.CurrentAsString());
-
                 xml.AddRange(WriteVarName(symbolTable, type, kind, it));
             }
-            else if (it.Current().Is("symbol", ";"))
-            {
-                xml.Add(it.CurrentAsString());
-            }
-            else
+            else if (!it.Current().Is("symbol", ";"))
             {
                 throw new Exception("Line ending expected for field/static.");
             }
@@ -209,7 +199,7 @@ namespace JackCompiler
             return xml;
         }
 
-        private IEnumerable<string> CompileSubroutineBody(TokenIterator it, SymbolTable symbolTable)
+        private IEnumerable<string> CompileSubroutineBody(TokenIterator it, SymbolTable symbolTable, string returnType)
         {
             var xml = new List<string>();
 
@@ -221,7 +211,7 @@ namespace JackCompiler
 
             xml.AddRange(CompileVarDec(it, symbolTable, "varDec", "var"));
 
-            xml.AddRange(CompileStatements(it));
+            xml.AddRange(CompileStatements(it, returnType));
 
             if (!it.HasMore())
                 throw new Exception("Expected subroutine body ending.");
@@ -232,7 +222,7 @@ namespace JackCompiler
             return xml;
         }
 
-        private IEnumerable<string> CompileStatements(TokenIterator it)
+        private IEnumerable<string> CompileStatements(TokenIterator it, string returnType)
         {
             var xml = new List<string>();
 
@@ -242,11 +232,11 @@ namespace JackCompiler
 
                 xml.AddRange(CompileDo(it));
 
-                xml.AddRange(CompileReturn(it));
+                xml.AddRange(CompileReturn(it, returnType));
 
-                xml.AddRange(CompileIf(it));
+                xml.AddRange(CompileIf(it, returnType));
 
-                xml.AddRange(CompileWhile(it));
+                xml.AddRange(CompileWhile(it, returnType));
             }
 
             return xml;
@@ -262,11 +252,9 @@ namespace JackCompiler
             if (!it.Peek().Is("keyword", "let"))
                 return xml;
 
-            xml.Add("<letStatement>");
+            it.Next();
 
-            xml.Add(it.Next().ToString());
-
-            xml.AddRange(GetVarName(it));
+            var varStatement = GetVarName(it);
 
             if (!it.HasMore())
                 throw new Exception("Equals expected for let statement.");
@@ -274,19 +262,15 @@ namespace JackCompiler
             if (!it.Next().Is("symbol", "="))
                 throw new Exception("Defined equals expected for let statement.");
 
-            xml.Add(it.CurrentAsString());
-
             xml.AddRange(CompileExpression(it).Item1);
+
+            xml.AddRange(varStatement);
 
             if (!it.HasMore())
                 throw new Exception("Ending expected for let statement.");
 
             if (!it.Next().Is("symbol", ";"))
                 throw new Exception("Defined ending expected for let statement.");
-
-            xml.Add(it.CurrentAsString());
-
-            xml.Add("</letStatement>");
 
             return xml;
         }
@@ -305,6 +289,8 @@ namespace JackCompiler
 
             xml.AddRange(CompileSubroutineCall(it));
 
+            xml.Add(VMWriter.WritePop(Segment.TEMP, 0));
+
             if (!it.HasMore())
                 throw new Exception("Ending expected for do statement.");
 
@@ -314,7 +300,7 @@ namespace JackCompiler
             return xml;
         }
 
-        private IEnumerable<string> CompileReturn(TokenIterator it)
+        private IEnumerable<string> CompileReturn(TokenIterator it, string returnType)
         {
             var xml = new List<string>();
 
@@ -328,6 +314,9 @@ namespace JackCompiler
 
             xml.AddRange(CompileExpression(it).Item1);
 
+            if (returnType == "void")
+                xml.Add(VMWriter.WritePush(Segment.CONSTANT, 0));
+
             xml.Add(VMWriter.WriteReturn());
 
             if (!it.HasMore())
@@ -339,7 +328,7 @@ namespace JackCompiler
             return xml;
         }
 
-        private IEnumerable<string> CompileIf(TokenIterator it)
+        private IEnumerable<string> CompileIf(TokenIterator it, string returnType)
         {
             var xml = new List<string>();
 
@@ -349,9 +338,7 @@ namespace JackCompiler
             if (!it.Peek().Is("keyword", "if"))
                 return xml;
 
-            xml.Add("<ifStatement>");
-
-            xml.Add(it.Next().ToString());
+            it.Next();
 
             if (!it.HasMore())
                 throw new Exception("Opening paranthesis expected for if statement.");
@@ -359,9 +346,14 @@ namespace JackCompiler
             if (!it.Next().Is("symbol", "("))
                 throw new Exception("Defined opening paranthesis expected for if statement.");
 
-            xml.Add(it.CurrentAsString());
-
             xml.AddRange(CompileExpression(it).Item1);
+
+            xml.Add(VMWriter.WriteArithmetic(ArithmeticOp.NOT));
+
+            var label1 = $"L{++_NextLabelIndex}";
+            var label2 = $"L{++_NextLabelIndex}";
+
+            xml.Add(VMWriter.WriteIf(label1));
 
             if (!it.HasMore())
                 throw new Exception("Closing paranthesis expected for if statement.");
@@ -369,17 +361,13 @@ namespace JackCompiler
             if (!it.Next().Is("symbol", ")"))
                 throw new Exception("Defined closing paranthesis expected for if statement.");
 
-            xml.Add(it.CurrentAsString());
-
             if (!it.HasMore())
                 throw new Exception("Opening brace expected for if statement.");
 
             if (!it.Next().Is("symbol", "{"))
                 throw new Exception("Defined opening brace expected for if statement.");
 
-            xml.Add(it.CurrentAsString());
-
-            xml.AddRange(CompileStatements(it));
+            xml.AddRange(CompileStatements(it, returnType));
 
             if (!it.HasMore())
                 throw new Exception("Closing brace expected for if statement.");
@@ -387,16 +375,19 @@ namespace JackCompiler
             if (!it.Next().Is("symbol", "}"))
                 throw new Exception("Defined closing brace expected for if statement.");
 
-            xml.Add(it.CurrentAsString());
+            var @else = CompileElse(it, label2, returnType);
 
-            xml.AddRange(CompileElse(it));
+            if (@else.Count() > 0)
+                xml.Add(VMWriter.WriteGoto(label2));
 
-            xml.Add("</ifStatement>");
+            xml.Add(VMWriter.WriteLabel(label1));
+
+            xml.AddRange(@else);
 
             return xml;
         }
 
-        private IEnumerable<string> CompileElse(TokenIterator it)
+        private IEnumerable<string> CompileElse(TokenIterator it, string label, string returnType)
         {
             var xml = new List<string>();
 
@@ -406,7 +397,7 @@ namespace JackCompiler
             if (!it.Peek().Is("keyword", "else"))
                 return xml;
 
-            xml.Add(it.Next().ToString());
+            it.Next();
 
             if (!it.HasMore())
                 throw new Exception("Opening brace expected for if statement.");
@@ -414,9 +405,9 @@ namespace JackCompiler
             if (!it.Next().Is("symbol", "{"))
                 throw new Exception("Defined opening brace expected for if statement.");
 
-            xml.Add(it.CurrentAsString());
+            xml.AddRange(CompileStatements(it, returnType));
 
-            xml.AddRange(CompileStatements(it));
+            xml.Add(VMWriter.WriteLabel(label));
 
             if (!it.HasMore())
                 throw new Exception("Closing brace expected for else statement.");
@@ -424,12 +415,10 @@ namespace JackCompiler
             if (!it.Next().Is("symbol", "}"))
                 throw new Exception("Defined closing brace expected for else statement.");
 
-            xml.Add(it.CurrentAsString());
-
             return xml;
         }
 
-        private IEnumerable<string> CompileWhile(TokenIterator it)
+        private IEnumerable<string> CompileWhile(TokenIterator it, string returnType)
         {
             var xml = new List<string>();
 
@@ -439,9 +428,11 @@ namespace JackCompiler
             if (!it.Peek().Is("keyword", "while"))
                 return xml;
 
-            xml.Add("<whileStatement>");
+            it.Next();
 
-            xml.Add(it.Next().ToString());
+            var label1 = $"L{++_NextLabelIndex}";
+
+            xml.Add(VMWriter.WriteLabel(label1));
 
             if (!it.HasMore())
                 throw new Exception("Opening paranthesis expected for while statement.");
@@ -449,9 +440,13 @@ namespace JackCompiler
             if (!it.Next().Is("symbol", "("))
                 throw new Exception("Defined opening paranthesis expected for while statement.");
 
-            xml.Add(it.CurrentAsString());
-
             xml.AddRange(CompileExpression(it).Item1);
+
+            xml.Add(VMWriter.WriteArithmetic(ArithmeticOp.NOT));
+
+            var label2 = $"L{++_NextLabelIndex}";
+
+            xml.Add(VMWriter.WriteIf(label2));
 
             if (!it.HasMore())
                 throw new Exception("Closing paranthesis expected for while statement.");
@@ -459,27 +454,23 @@ namespace JackCompiler
             if (!it.Next().Is("symbol", ")"))
                 throw new Exception("Defined closing paranthesis expected for while statement.");
 
-            xml.Add(it.CurrentAsString());
-
             if (!it.HasMore())
                 throw new Exception("Opening brace expected for while statement.");
 
             if (!it.Next().Is("symbol", "{"))
                 throw new Exception("Defined opening brace expected for while statement.");
 
-            xml.Add(it.CurrentAsString());
+            xml.AddRange(CompileStatements(it, returnType));
 
-            xml.AddRange(CompileStatements(it));
+            xml.Add(VMWriter.WriteGoto(label1));
+
+            xml.Add(VMWriter.WriteLabel(label2));
 
             if (!it.HasMore())
                 throw new Exception("Closing brace expected for while statement.");
 
             if (!it.Next().Is("symbol", "}"))
                 throw new Exception("Defined closing brace expected for while statement.");
-
-            xml.Add(it.CurrentAsString());
-
-            xml.Add("</whileStatement>");
 
             return xml;
         }
@@ -503,7 +494,7 @@ namespace JackCompiler
             {
                 var expressionList = CompileExpressionList(it);
 
-                xml.AddRange(expressionList.Item1.Reverse());
+                xml.AddRange(expressionList.Item1);
 
                 xml.Add(VMWriter.WriteCall(prefix + identifier, expressionList.Item2));
 
@@ -532,7 +523,7 @@ namespace JackCompiler
             return (xml, expressions.Item2);
         }
 
-        private (IEnumerable<string>, int) CompileExpression(TokenIterator it, int argCount = 1)
+        private (IEnumerable<string>, int) CompileExpression(TokenIterator it, int argCount = 0)
         {
             var xml = new List<string>();
 
@@ -540,33 +531,56 @@ namespace JackCompiler
 
             if (terms.Count() > 0)
             {
+                argCount++;
+
+                xml.AddRange(terms);
+
                 if (it.HasMore() && it.Peek().Is("symbol", "+", "-", "*", "/", "&", "|", "<", ">", "="))
                 {
                     var op = it.Next().Value;
+
+                    xml.AddRange(CompileTerm(it));
 
                     switch (op)
                     {
                         case "+":
                             xml.Add(VMWriter.WriteArithmetic(ArithmeticOp.ADD));
                             break;
+                        case "-":
+                            xml.Add(VMWriter.WriteArithmetic(ArithmeticOp.SUB));
+                            break;
                         case "*":
                             xml.Add(VMWriter.WriteCall("Math.multiply", 2));
+                            break;
+                        case "<":
+                            xml.Add(VMWriter.WriteArithmetic(ArithmeticOp.LT));
+                            break;
+                        case ">":
+                            xml.Add(VMWriter.WriteArithmetic(ArithmeticOp.GT));
+                            break;
+                        case "=":
+                            xml.Add(VMWriter.WriteArithmetic(ArithmeticOp.EQ));
+                            break;
+                        case "&":
+                            xml.Add(VMWriter.WriteArithmetic(ArithmeticOp.AND));
                             break;
                         default:
                             xml.Add(op);
                             break;
                     }
-
-                    xml.AddRange(CompileTerm(it));
                 }
 
                 if (it.HasMore() && it.Peek().Is("symbol", ","))
                 {
-                    xml.Add(it.Next().ToString());
-                    xml.AddRange(CompileExpression(it, ++argCount).Item1);
-                }
+                    it.Next();
 
-                xml.AddRange(terms);
+                    var expression = CompileExpression(it, argCount);
+
+                    // Important to gather the recursive arg count;
+                    argCount = expression.Item2;
+
+                    xml.AddRange(expression.Item1);
+                }
             }
 
             return (xml, argCount);
@@ -603,8 +617,14 @@ namespace JackCompiler
                 }
                 else if (it.Peek().Is("symbol", "-", "~")) // unary ops
                 {
-                    xml.Add(it.Next().ToString());
+                    var op = it.Next().Value;
+
                     xml.AddRange(CompileTerm(it));
+
+                    if (op == "-")
+                        xml.Add(VMWriter.WriteArithmetic(ArithmeticOp.NEG));
+                    else
+                        xml.Add(VMWriter.WriteArithmetic(ArithmeticOp.NOT));
                 }
                 else
                 {
@@ -612,9 +632,34 @@ namespace JackCompiler
                     {
                         xml.Add(VMWriter.WritePush(Segment.CONSTANT, int.Parse(it.Next().Value)));
                     }
+                    else if (it.Peek().Is("keyword"))
+                    {
+                        var keyword = it.Next().Value;
+
+                        if (keyword == "true")
+                        {
+                            xml.Add(VMWriter.WritePush(Segment.CONSTANT, 1));
+                            xml.Add(VMWriter.WriteArithmetic(ArithmeticOp.NEG));
+                        }
+                        else if (keyword == "false")
+                        {
+                            xml.Add(VMWriter.WritePush(Segment.CONSTANT, 0));
+                        }
+                    }
                     else
                     {
-                        xml.Add(it.Next().ToString());
+                        // Refactor this!
+                        var name = it.Next().Value;
+                        var segment = Segment.UNKNOWN;
+                        var kind = _SubroutineSymbolTable.KindOf(name);
+
+                        if (kind == SymbolKind.ARGUMENT)
+                            segment = Segment.ARGUMENT;
+                        else if (kind == SymbolKind.VAR)
+                            segment = Segment.LOCAL;
+                        //*********************************
+
+                        xml.Add(VMWriter.WritePush(segment, _SubroutineSymbolTable.IndexOf(name)));
                     }
                 }
             }
@@ -632,7 +677,18 @@ namespace JackCompiler
             if (!it.Next().Is("identifier"))
                 throw new Exception("Defined indentifier expected for var name.");
 
-            xml.Add(it.CurrentAsString());
+            // Refactor this!
+            var name = it.Current().Value;
+            var segment = Segment.UNKNOWN;
+            var kind = _SubroutineSymbolTable.KindOf(name);
+
+            if (kind == SymbolKind.ARGUMENT)
+                segment = Segment.ARGUMENT;
+            else if (kind == SymbolKind.VAR)
+                segment = Segment.LOCAL;
+            //*********************************
+
+            xml.Add(VMWriter.WritePop(segment, _SubroutineSymbolTable.IndexOf(name)));
 
             if (it.HasMore() && it.Peek().Is("symbol", "["))
             {

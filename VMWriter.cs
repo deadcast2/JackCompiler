@@ -6,7 +6,7 @@ using System.Threading.Tasks;
 
 namespace JackCompiler
 {
-    public enum Segment { CONSTANT, ARGUMENT, LOCAL, STATIC, THIS, THAT, POINTER, TEMP }
+    public enum Segment { CONSTANT, ARGUMENT, LOCAL, STATIC, THIS, THAT, POINTER, TEMP, UNKNOWN }
     public enum ArithmeticOp { ADD, SUB, NEG, EQ, GT, LT, AND, OR, NOT }
 
     internal static class VMWriter

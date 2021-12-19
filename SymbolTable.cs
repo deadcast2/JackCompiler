@@ -2,7 +2,7 @@
 
 namespace JackCompiler
 {
-    public enum SymbolKind { NONE, STATIC, FIELD, ARG, VAR }
+    public enum SymbolKind { NONE, STATIC, FIELD, ARGUMENT, VAR }
 
     internal class SymbolTable
     {
@@ -20,6 +20,7 @@ namespace JackCompiler
             _VarIndex = 0;
             _FieldIndex = 0;
             _StaticIndex = 0;
+
             _Symbols = new Dictionary<string, (string Type, SymbolKind Kind, int Index)>();
         }
 
@@ -34,7 +35,7 @@ namespace JackCompiler
                 case "var":
                     return SymbolKind.VAR;
                 case "arg":
-                    return SymbolKind.ARG;
+                    return SymbolKind.ARGUMENT;
             }
 
             return SymbolKind.NONE;
@@ -52,7 +53,7 @@ namespace JackCompiler
                 case SymbolKind.FIELD:
                     index = _FieldIndex++;
                     break;
-                case SymbolKind.ARG:
+                case SymbolKind.ARGUMENT:
                     index = _ArgIndex++;
                     break;
                 case SymbolKind.VAR:
@@ -71,7 +72,7 @@ namespace JackCompiler
                     return _StaticIndex++;
                 case SymbolKind.FIELD:
                     return _FieldIndex++;
-                case SymbolKind.ARG:
+                case SymbolKind.ARGUMENT:
                     return _ArgIndex++;
                 default:
                     return _VarIndex++;

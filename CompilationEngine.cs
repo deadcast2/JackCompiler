@@ -164,7 +164,7 @@ namespace JackCompiler
             if (!it.HasMore())
                 return xml;
 
-            if (it.Peek().Is("keyword"))
+            if (it.Peek().Is("identifier") || it.Peek().Is("keyword"))
                 xml.AddRange(WriteParamName(it, symbolTable));
 
             return xml;
@@ -700,7 +700,7 @@ namespace JackCompiler
                             xml.Add(VMWriter.WritePush(Segment.CONSTANT, 1));
                             xml.Add(VMWriter.WriteArithmetic(ArithmeticOp.NEG));
                         }
-                        else if (keyword == "false")
+                        else if (keyword == "false" || keyword == "null")
                         {
                             xml.Add(VMWriter.WritePush(Segment.CONSTANT, 0));
                         }

@@ -593,6 +593,9 @@ namespace JackCompiler
                         case "*":
                             xml.Add(VMWriter.WriteCall("Math.multiply", 2));
                             break;
+                        case "/":
+                            xml.Add(VMWriter.WriteCall("Math.divide", 2));
+                            break;
                         case "<":
                             xml.Add(VMWriter.WriteArithmetic(ArithmeticOp.LT));
                             break;
@@ -646,7 +649,7 @@ namespace JackCompiler
                 }
                 else if (it.Peek(2).Is("symbol", "["))
                 {
-                    xml.AddRange(GetVarName(it));
+                    xml.AddRange(GetVarName(it, true));
                 }
                 else if (it.Peek().Is("symbol", "("))
                 {
@@ -673,7 +676,7 @@ namespace JackCompiler
                     {
                         xml.Add(VMWriter.WritePush(Segment.CONSTANT, int.Parse(it.Next().Value)));
                     }
-                    if (it.Peek().Is("stringConstant"))
+                    else if (it.Peek().Is("stringConstant"))
                     {
                         var content = it.Next().Value;
                         xml.Add(VMWriter.WritePush(Segment.CONSTANT, content.Length));
@@ -715,7 +718,7 @@ namespace JackCompiler
             return xml;
         }
 
-        private IEnumerable<string> GetVarName(TokenIterator it)
+        private IEnumerable<string> GetVarName(TokenIterator it, bool rightHand = false)
         {
             var xml = new List<string>();
 
@@ -727,20 +730,36 @@ namespace JackCompiler
 
             var symbol = LookupSymbol(it.Current().Value);
 
-            xml.Add(VMWriter.WritePop(symbol.Segment, symbol.Index));
-
             if (it.HasMore() && it.Peek().Is("symbol", "["))
             {
-                xml.Add(it.Next().ToString());
+                it.Next();
+
+                xml.Add(VMWriter.WritePush(symbol.Segment, symbol.Index));
+
                 xml.AddRange(CompileExpression(it).Item1);
+
+                xml.Add(VMWriter.WriteArithmetic(ArithmeticOp.ADD));
+
+                xml.Add(VMWriter.WritePop(Segment.POINTER, 1));
+
+                if (rightHand)
+                {
+                    xml.Add(VMWriter.WritePush(Segment.THAT, 0));
+                }
+                else
+                {
+                    xml.Add(VMWriter.WritePop(Segment.THAT, 0));
+                }
 
                 if (!it.HasMore())
                     throw new Exception("Closing bracket expected for array access.");
 
                 if (!it.Next().Is("symbol"))
                     throw new Exception("Defined closing bracket expected for array access.");
-
-                xml.Add(it.CurrentAsString());
+            }
+            else
+            {
+                xml.Add(VMWriter.WritePop(symbol.Segment, symbol.Index));
             }
 
             return xml;

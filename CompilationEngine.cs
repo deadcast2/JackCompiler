@@ -608,6 +608,9 @@ namespace JackCompiler
                         case "&":
                             xml.Add(VMWriter.WriteArithmetic(ArithmeticOp.AND));
                             break;
+                        case "|":
+                            xml.Add(VMWriter.WriteArithmetic(ArithmeticOp.OR));
+                            break;
                         default:
                             xml.Add(op);
                             break;
@@ -786,6 +789,8 @@ namespace JackCompiler
                 segment = Segment.THIS;
             else if (kind == SymbolKind.POINTER)
                 segment = Segment.POINTER;
+            else if (kind == SymbolKind.STATIC)
+                segment = Segment.STATIC;
 
             return (segment, symbolTable.IndexOf(name), symbolTable.TypeOf(name));
         }
